@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# release: optionally define default process types
+cat <<YAML
+---
+default_process_types:
+  web: uvicorn src.apis.longjump_api:app --host=0.0.0.0 --port=\$PORT
+YAML

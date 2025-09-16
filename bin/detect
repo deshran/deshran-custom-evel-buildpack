@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# detect: always succeed so buildpack always participates
+echo "deshran-custom-evel-buildpack"
+exit 0

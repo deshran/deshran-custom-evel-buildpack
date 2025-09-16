@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+BUILD_DIR="$1"
+CACHE_DIR="$2"
+ENV_DIR="$3"
+
+echo "deshran-custom-evel-buildpack: compile started"
+
+PROFILE_DIR="$BUILD_DIR/.profile.d"
+mkdir -p "$PROFILE_DIR"
+
+cat > "$PROFILE_DIR/deshran_install_wheels.sh" <<'SH'
+#!/usr/bin/env bash
+# deshran runtime installer (runs on dyno boot via .profile.d)
+set -euo pipefail
+
+# Directory to store downloaded wheels on dyno
+WHEEL_DIR="$HOME/.deshran_wheels"
+MARKER="$WHEEL_DIR/.installed"
+
+# Prefer virtualenv pip/python if available
+if [ -n "${VIRTUAL_ENV:-}" ]; then
+  PYTHON_BIN="$VIRTUAL_ENV/bin/python"
+else
+  PYTHON_BIN=$(which python || echo "/usr/bin/python3")
+fi
+
+# You can override DESHRAN_WHEEL_URLS via Heroku config vars (space separated)
+# Defaults: PyTorch CPU wheels (update versions if needed)
+: "${DESHRAN_WHEEL_URLS:=https://download.pytorch.org/whl/cpu/torch-2.4.1%2Bcpu-cp312-cp312-linux_x86_64.whl https://download.pytorch.org/whl/cpu/torchvision-0.19.1%2Bcpu-cp312-cp312-linux_x86_64.whl https://download.pytorch.org/whl/cpu/torchaudio-2.4.1%2Bcpu-cp312-cp312-linux_x86_64.whl}"
+
+if [ -f "$MARKER" ]; then
+  echo "deshran: heavy deps already installed (marker present)"
+  return 0 2>/dev/null || exit 0
+fi
+
+mkdir -p "$WHEEL_DIR"
+cd "$WHEEL_DIR"
+
+echo "deshran: using python binary: $PYTHON_BIN"
+
+# Download wheels if missing
+for url in $DESHRAN_WHEEL_URLS; do
+  fname=$(basename "$url")
+  # curl handles URL-encoded names (e.g. %2B)
+  if [ ! -f "$fname" ]; then
+    echo "deshran: downloading $url"
+    curl -sSL -o "$fname" "$url" || { echo "deshran: failed to download $url"; exit 1; }
+  else
+    echo "deshran: $fname already downloaded"
+  fi
+done
+
+# Install wheels into venv
+echo "deshran: pip installing wheels into venv"
+PIP_CMD="$PYTHON_BIN -m pip install --no-cache-dir --upgrade"
+for whl in "$WHEEL_DIR"/*.whl; do
+  echo "deshran: installing $whl"
+  $PIP_CMD "$whl" || { echo "deshran: pip install failed for $whl"; exit 1; }
+done
+
+# create marker so we skip on subsequent process starts on same dyno
+touch "$MARKER"
+echo "deshran: heavy deps installed"
+SH
+
+# ensure script executable
+chmod +x "$PROFILE_DIR/deshran_install_wheels.sh"
+
+echo "deshran-custom-evel-buildpack: wrote $PROFILE_DIR/deshran_install_wheels.sh"
+echo "deshran-custom-evel-buildpack: compile finished"
